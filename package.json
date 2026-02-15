@@ -1,0 +1,22 @@
+{
+  "name": "acbi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous Company Building Infrastructure - AI system that builds complete, functioning companies",
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "lint": "pnpm -r run lint",
+    "clean": "pnpm -r run clean",
+    "db:migrate": "pnpm --filter @acbi/database run migrate",
+    "db:seed": "pnpm --filter @acbi/database run seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "typecheck": "pnpm -r run typecheck"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
