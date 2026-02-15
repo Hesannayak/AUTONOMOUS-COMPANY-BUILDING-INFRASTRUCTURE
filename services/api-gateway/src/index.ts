@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { createLogger } from '@acbi/utils';
@@ -8,7 +8,7 @@ import { standardRateLimit } from './middleware/rate-limit.js';
 import { createProxyMiddleware } from './proxy.js';
 
 const logger = createLogger('api-gateway');
-const app = express();
+const app: Express = express();
 const port = SERVICE_PORTS['api-gateway'] ?? 8000;
 
 // Global middleware

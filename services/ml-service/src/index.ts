@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { createLogger } from '@acbi/utils';
@@ -6,7 +6,7 @@ import { SERVICE_PORTS } from '@acbi/config';
 import { LLMRouter } from './llm-router.js';
 
 const logger = createLogger('ml-service');
-const app = express();
+const app: Express = express();
 const port = SERVICE_PORTS['ml-service'] ?? 3007;
 
 // Middleware

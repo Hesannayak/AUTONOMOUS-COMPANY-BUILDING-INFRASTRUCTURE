@@ -48,7 +48,7 @@ export async function proxyRequest(
     }
 
     // Forward user ID if set by auth middleware
-    const userId = (req as Record<string, unknown>)['userId'];
+    const userId = (req as unknown as Record<string, unknown>)['userId'];
     if (typeof userId === 'string') {
       headers['x-user-id'] = userId;
     }

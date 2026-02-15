@@ -19,7 +19,7 @@ function rowToEvent(row: EventRow): DomainEvent {
     aggregateId: row.aggregate_id,
     aggregateType: row.aggregate_type as DomainEvent['aggregateType'],
     payload: row.payload,
-    metadata: row.metadata as DomainEvent['metadata'],
+    metadata: row.metadata as unknown as DomainEvent['metadata'],
     timestamp: row.timestamp,
     version: row.version,
   };

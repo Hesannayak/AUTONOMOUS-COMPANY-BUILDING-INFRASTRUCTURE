@@ -4,7 +4,7 @@
 // MVP: Delaware C-Corp via Stripe Atlas.
 // ============================================
 
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { createLogger } from '@acbi/utils';
@@ -55,7 +55,7 @@ registry.register(
 );
 
 // Create Express app
-const app = express();
+const app: Express = express();
 
 // Middleware
 app.use(helmet());

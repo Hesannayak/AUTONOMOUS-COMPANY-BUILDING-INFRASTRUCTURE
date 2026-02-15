@@ -1,3 +1,4 @@
+import Anthropic from '@anthropic-ai/sdk';
 import { createLogger } from '@acbi/utils';
 
 const logger = createLogger('ml-service:anthropic-provider');
@@ -17,6 +18,7 @@ export interface ChatResponse {
   id: string;
   model: string;
   content: string;
+  toolCalls?: Array<{ name: string; input: Record<string, unknown> }>;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -25,68 +27,97 @@ export interface ChatResponse {
 }
 
 export class AnthropicProvider {
+  private client: Anthropic | null = null;
   private totalInputTokens = 0;
   private totalOutputTokens = 0;
 
   constructor() {
-    logger.info('AnthropicProvider initialized');
+    const apiKey = process.env['ANTHROPIC_API_KEY'];
+    if (apiKey) {
+      this.client = new Anthropic({ apiKey });
+      logger.info('AnthropicProvider initialized with real API key');
+    } else {
+      logger.warn('ANTHROPIC_API_KEY not set — running in placeholder mode');
+    }
   }
 
-  /**
-   * Send a chat completion request to the Anthropic API.
-   *
-   * Currently returns a structured placeholder response.
-   * When connecting to the real API, replace the placeholder block below
-   * with an actual HTTP call to https://api.anthropic.com/v1/messages.
-   */
   async chat(
     model: string,
     messages: ChatMessage[],
     tools?: ToolDefinition[],
     maxTokens?: number,
   ): Promise<ChatResponse> {
-    const _maxTokens = maxTokens ?? 4096;
+    const resolvedMaxTokens = maxTokens ?? 4096;
 
     logger.info(
-      { model, messageCount: messages.length, tools: tools?.length ?? 0, maxTokens: _maxTokens },
+      { model, messageCount: messages.length, tools: tools?.length ?? 0, maxTokens: resolvedMaxTokens },
       'Anthropic chat request',
     );
 
-    // --- Real API call would go here ---
-    // import Anthropic from '@anthropic-ai/sdk';
-    // const client = new Anthropic({ apiKey: process.env['ANTHROPIC_API_KEY'] });
-    // const response = await client.messages.create({
-    //   model,
-    //   max_tokens: _maxTokens,
-    //   messages: messages.filter(m => m.role !== 'system').map(m => ({
-    //     role: m.role as 'user' | 'assistant',
-    //     content: m.content,
-    //   })),
-    //   system: messages.find(m => m.role === 'system')?.content,
-    //   tools: tools?.map(t => ({
-    //     name: t.name,
-    //     description: t.description,
-    //     input_schema: t.parameters,
-    //   })),
-    // });
-    // -----------------------------------
+    // If no API key, return placeholder
+    if (!this.client) {
+      return this.placeholderResponse(model, messages, resolvedMaxTokens);
+    }
 
-    // Placeholder response simulating API behavior
-    const simulatedInputTokens = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
-    const simulatedOutputTokens = Math.ceil(_maxTokens * 0.3);
+    // Real Anthropic API call
+    const systemMessage = messages.find((m) => m.role === 'system');
+    const nonSystemMessages = messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
-    this.totalInputTokens += simulatedInputTokens;
-    this.totalOutputTokens += simulatedOutputTokens;
+    // Ensure conversation starts with user message
+    if (nonSystemMessages.length === 0 || nonSystemMessages[0]?.role !== 'user') {
+      nonSystemMessages.unshift({ role: 'user', content: 'Begin.' });
+    }
+
+    const requestParams: Anthropic.MessageCreateParams = {
+      model,
+      max_tokens: resolvedMaxTokens,
+      messages: nonSystemMessages,
+    };
+
+    if (systemMessage) {
+      requestParams.system = systemMessage.content;
+    }
+
+    if (tools && tools.length > 0) {
+      requestParams.tools = tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.parameters as Anthropic.Tool.InputSchema,
+      }));
+    }
+
+    const apiResponse = await this.client.messages.create(requestParams);
+
+    // Extract text content
+    let content = '';
+    const toolCalls: Array<{ name: string; input: Record<string, unknown> }> = [];
+
+    for (const block of apiResponse.content) {
+      if (block.type === 'text') {
+        content += block.text;
+      } else if (block.type === 'tool_use') {
+        toolCalls.push({
+          name: block.name,
+          input: block.input as Record<string, unknown>,
+        });
+      }
+    }
+
+    this.totalInputTokens += apiResponse.usage.input_tokens;
+    this.totalOutputTokens += apiResponse.usage.output_tokens;
 
     const response: ChatResponse = {
-      id: `msg_placeholder_${Date.now()}`,
-      model,
-      content: `[Placeholder] Anthropic ${model} response to: "${messages[messages.length - 1]?.content.slice(0, 100) ?? ''}"`,
+      id: apiResponse.id,
+      model: apiResponse.model,
+      content,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
-        inputTokens: simulatedInputTokens,
-        outputTokens: simulatedOutputTokens,
+        inputTokens: apiResponse.usage.input_tokens,
+        outputTokens: apiResponse.usage.output_tokens,
       },
-      finishReason: 'end_turn',
+      finishReason: apiResponse.stop_reason ?? 'end_turn',
     };
 
     logger.info(
@@ -97,9 +128,29 @@ export class AnthropicProvider {
     return response;
   }
 
-  /**
-   * Get the total token usage tracked by this provider instance.
-   */
+  private placeholderResponse(
+    model: string,
+    messages: ChatMessage[],
+    maxTokens: number,
+  ): ChatResponse {
+    const simulatedInputTokens = messages.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+    const simulatedOutputTokens = Math.ceil(maxTokens * 0.3);
+
+    this.totalInputTokens += simulatedInputTokens;
+    this.totalOutputTokens += simulatedOutputTokens;
+
+    return {
+      id: `msg_placeholder_${Date.now()}`,
+      model,
+      content: `[Placeholder] Anthropic ${model} response to: "${messages[messages.length - 1]?.content.slice(0, 100) ?? ''}"`,
+      usage: {
+        inputTokens: simulatedInputTokens,
+        outputTokens: simulatedOutputTokens,
+      },
+      finishReason: 'end_turn',
+    };
+  }
+
   getTokenUsage(): { inputTokens: number; outputTokens: number } {
     return {
       inputTokens: this.totalInputTokens,

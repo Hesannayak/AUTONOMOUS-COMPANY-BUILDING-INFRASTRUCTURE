@@ -1,4 +1,4 @@
-import { createLogger, generateId } from '@acbi/utils';
+import { createLogger } from '@acbi/utils';
 import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { OpenAIProvider } from './providers/openai-provider.js';
 import { CostTracker } from './cost-tracker.js';

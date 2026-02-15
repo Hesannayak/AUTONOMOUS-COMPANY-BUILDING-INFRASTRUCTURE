@@ -36,7 +36,7 @@ export abstract class BaseAgent extends EventEmitter<AgentEvents> {
   readonly type: AgentType;
   protected status: AgentStatus = 'idle';
   protected config: AgentConfig;
-  protected logger;
+  protected logger: ReturnType<typeof createLogger>;
   protected llm: LLMProvider | null = null;
   protected artifacts: Artifact[] = [];
 

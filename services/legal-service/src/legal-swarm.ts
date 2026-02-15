@@ -197,7 +197,7 @@ export class LegalSwarm {
    * Placeholder: Create legal documents via Clerky.
    * @see https://www.clerky.com/
    */
-  private async _generateDocumentsViaClerky(_companyId: string): Promise<string[]> {
+  async generateDocumentsViaClerky(_companyId: string): Promise<string[]> {
     // TODO: Implement Clerky API integration
     // Generates: Certificate of Incorporation, Bylaws, Board Consent,
     // Stock Purchase Agreements, IP Assignment, etc.

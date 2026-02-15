@@ -4,7 +4,7 @@
 // all swarms (legal, product, growth, sales, finance, customer-success).
 // ============================================
 
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { createLogger } from '@acbi/utils';
@@ -22,7 +22,7 @@ const resourceManager = new ResourceManager();
 const companyBuilder = new CompanyBuilder(resourceManager);
 
 // Create Express app
-const app = express();
+const app: Express = express();
 
 // Middleware
 app.use(helmet());

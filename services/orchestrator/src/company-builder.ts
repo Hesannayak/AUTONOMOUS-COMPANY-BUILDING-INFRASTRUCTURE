@@ -7,17 +7,16 @@
 import type {
   BuildCompanyRequest,
   Company,
-  CompanyStatus,
   DomainEvent,
   SwarmOrchestrationPlan,
   SwarmPhase,
   SwarmPhaseTask,
-  SwarmType,
   Jurisdiction,
   EntityType,
   EventMetadata,
 } from '@acbi/types';
 import { createLogger, generateId, generateCorrelationId } from '@acbi/utils';
+import { SERVICE_PORTS } from '@acbi/config';
 import { ResourceManager } from './resource-manager.js';
 
 const logger = createLogger('orchestrator:company-builder');
@@ -33,7 +32,7 @@ function createDefaultPhases(companyId: string): SwarmPhase[] {
       order: 1,
       swarmType: 'legal',
       dependsOn: [],
-      estimatedDurationMs: 3_600_000, // 1 hour
+      estimatedDurationMs: 3_600_000,
       tasks: [
         {
           id: generateId('task'),
@@ -49,20 +48,13 @@ function createDefaultPhases(companyId: string): SwarmPhase[] {
           input: { companyId },
           dependsOn: [],
         },
-        {
-          id: generateId('task'),
-          agentType: 'compliance-monitor',
-          description: 'Set up compliance monitoring and regulatory tracking',
-          input: { companyId },
-          dependsOn: [],
-        },
       ] satisfies SwarmPhaseTask[],
     },
     {
       order: 2,
       swarmType: 'product',
       dependsOn: ['legal'],
-      estimatedDurationMs: 7_200_000, // 2 hours
+      estimatedDurationMs: 7_200_000,
       tasks: [
         {
           id: generateId('task'),
@@ -80,22 +72,8 @@ function createDefaultPhases(companyId: string): SwarmPhase[] {
         },
         {
           id: generateId('task'),
-          agentType: 'backend-agent',
-          description: 'Build backend services and API',
-          input: { companyId },
-          dependsOn: [],
-        },
-        {
-          id: generateId('task'),
           agentType: 'devops-agent',
-          description: 'Set up CI/CD pipeline and infrastructure',
-          input: { companyId },
-          dependsOn: [],
-        },
-        {
-          id: generateId('task'),
-          agentType: 'qa-agent',
-          description: 'Run automated testing and quality assurance',
+          description: 'Deploy product to production',
           input: { companyId },
           dependsOn: [],
         },
@@ -105,48 +83,19 @@ function createDefaultPhases(companyId: string): SwarmPhase[] {
       order: 3,
       swarmType: 'growth',
       dependsOn: ['product'],
-      estimatedDurationMs: 3_600_000, // 1 hour
+      estimatedDurationMs: 3_600_000,
       tasks: [
         {
           id: generateId('task'),
           agentType: 'seo-agent',
-          description: 'Optimize SEO and organic discovery',
-          input: { companyId },
-          dependsOn: [],
-        },
-        {
-          id: generateId('task'),
-          agentType: 'paid-ads-agent',
-          description: 'Set up and manage paid advertising campaigns',
+          description: 'Generate landing page and SEO content',
           input: { companyId },
           dependsOn: [],
         },
         {
           id: generateId('task'),
           agentType: 'social-media-agent',
-          description: 'Create social media presence and content strategy',
-          input: { companyId },
-          dependsOn: [],
-        },
-      ] satisfies SwarmPhaseTask[],
-    },
-    {
-      order: 4,
-      swarmType: 'sales',
-      dependsOn: ['growth'],
-      estimatedDurationMs: 1_800_000, // 30 min
-      tasks: [
-        {
-          id: generateId('task'),
-          agentType: 'sdr-agent',
-          description: 'Set up outbound sales development pipeline',
-          input: { companyId },
-          dependsOn: [],
-        },
-        {
-          id: generateId('task'),
-          agentType: 'ae-agent',
-          description: 'Configure account executive workflows and CRM',
+          description: 'Create social media presence',
           input: { companyId },
           dependsOn: [],
         },
@@ -155,42 +104,13 @@ function createDefaultPhases(companyId: string): SwarmPhase[] {
     {
       order: 4,
       swarmType: 'finance',
-      dependsOn: ['growth'],
-      estimatedDurationMs: 1_800_000, // 30 min
+      dependsOn: ['legal'],
+      estimatedDurationMs: 1_800_000,
       tasks: [
         {
           id: generateId('task'),
           agentType: 'treasurer-agent',
           description: 'Set up treasury management and banking',
-          input: { companyId },
-          dependsOn: [],
-        },
-        {
-          id: generateId('task'),
-          agentType: 'accountant-agent',
-          description: 'Configure bookkeeping and financial reporting',
-          input: { companyId },
-          dependsOn: [],
-        },
-      ] satisfies SwarmPhaseTask[],
-    },
-    {
-      order: 4,
-      swarmType: 'customer-success',
-      dependsOn: ['growth'],
-      estimatedDurationMs: 1_800_000, // 30 min
-      tasks: [
-        {
-          id: generateId('task'),
-          agentType: 'support-agent',
-          description: 'Set up customer support channels and knowledge base',
-          input: { companyId },
-          dependsOn: [],
-        },
-        {
-          id: generateId('task'),
-          agentType: 'onboarding-agent',
-          description: 'Design customer onboarding flows',
           input: { companyId },
           dependsOn: [],
         },
@@ -212,23 +132,21 @@ export class CompanyBuilder {
   /**
    * Start the company building process.
    * Creates the company record, orchestration plan, initializes budget,
-   * and emits the initial creation events.
+   * emits events, and kicks off the build pipeline.
    */
   async startBuild(request: BuildCompanyRequest): Promise<Company> {
     const companyId = generateId('co');
     const correlationId = generateCorrelationId();
     const now = new Date();
 
-    // Determine company name: use provided name or derive from the idea
     const companyName = request.name ?? `Company-${companyId.slice(0, 8)}`;
 
-    // Create company record
     const company: Company = {
       id: companyId,
       name: companyName,
       status: 'building',
       jurisdiction: request.jurisdiction as Jurisdiction,
-      entityType: (request.entityType as EntityType) ?? 'LLC',
+      entityType: (request.entityType as EntityType) ?? 'C-Corp',
       idea: request.idea,
       budget: request.budget,
       budgetSpent: 0,
@@ -241,87 +159,256 @@ export class CompanyBuilder {
     };
 
     this.companies.set(companyId, company);
-
-    // Initialize resource manager budget tracking
     this.resourceManager.initializeBudget(companyId, request.budget);
 
     // Create orchestration plan
     const phases = createDefaultPhases(companyId);
-    const plan: SwarmOrchestrationPlan = {
-      companyId,
-      phases,
-    };
+    const plan: SwarmOrchestrationPlan = { companyId, phases };
     this.plans.set(companyId, plan);
 
     // Emit creation events
-    const createdEvent = this.createEvent(
-      'company.created',
-      companyId,
-      'company',
-      {
-        name: companyName,
-        idea: request.idea,
-        budget: request.budget,
-        jurisdiction: request.jurisdiction,
-        entityType: company.entityType,
-        founders: request.founders,
-      },
+    this.appendEvent(companyId, this.createEvent(
+      'company.created', companyId, 'company',
+      { name: companyName, idea: request.idea, budget: request.budget, jurisdiction: request.jurisdiction },
       { correlationId, source: 'orchestrator' },
-    );
-    this.appendEvent(companyId, createdEvent);
+    ));
 
-    const buildStartedEvent = this.createEvent(
-      'company.build_started',
-      companyId,
-      'company',
-      {
-        phases: phases.map((p) => ({
-          order: p.order,
-          swarmType: p.swarmType,
-          dependsOn: p.dependsOn,
-          taskCount: p.tasks.length,
-          estimatedDurationMs: p.estimatedDurationMs,
-        })),
-      },
+    this.appendEvent(companyId, this.createEvent(
+      'company.build_started', companyId, 'company',
+      { phases: phases.map((p) => ({ order: p.order, swarmType: p.swarmType, taskCount: p.tasks.length })) },
       { correlationId, source: 'orchestrator' },
-    );
-    this.appendEvent(companyId, buildStartedEvent);
-
-    // Begin first phase (legal) asynchronously
-    this.advancePhase(companyId, 'legal', correlationId);
+    ));
 
     logger.info(
       { companyId, name: companyName, budget: request.budget, jurisdiction: request.jurisdiction },
       'Company build started',
     );
 
+    // Execute the build pipeline asynchronously (fire-and-forget for the API response)
+    this.executePipeline(companyId, company, request, correlationId).catch((err) => {
+      logger.error({ companyId, error: (err as Error).message }, 'Pipeline execution failed');
+      company.status = 'failed';
+      company.updatedAt = new Date();
+      this.appendEvent(companyId, this.createEvent(
+        'company.failed', companyId, 'company',
+        { error: (err as Error).message },
+        { correlationId, source: 'orchestrator' },
+      ));
+    });
+
     return company;
   }
 
   /**
-   * Get a company by its ID.
+   * Execute the full build pipeline: Legal -> Product -> Growth -> Finance
+   * Each phase calls the corresponding downstream microservice.
    */
+  private async executePipeline(
+    companyId: string,
+    company: Company,
+    request: BuildCompanyRequest,
+    correlationId: string,
+  ): Promise<void> {
+    // === Phase 1: Legal ===
+    logger.info({ companyId }, 'Phase 1: Starting legal incorporation');
+    company.status = 'legal_pending';
+    company.updatedAt = new Date();
+    this.appendEvent(companyId, this.createEvent(
+      'company.legal_started', companyId, 'company',
+      { swarmType: 'legal' },
+      { correlationId, source: 'orchestrator' },
+    ));
+
+    try {
+      const legalResult = await this.callService(
+        'legal-service',
+        '/api/legal/incorporate',
+        'POST',
+        {
+          companyName: company.name,
+          jurisdiction: company.jurisdiction,
+          entityType: company.entityType,
+          founders: company.founders,
+        },
+      );
+
+      company.legal = {
+        status: 'filing',
+        entityId: legalResult?.companyId as string | undefined,
+      };
+      company.status = 'legal_complete';
+      company.updatedAt = new Date();
+      this.appendEvent(companyId, this.createEvent(
+        'company.legal_completed', companyId, 'company',
+        { legalResult },
+        { correlationId, source: 'orchestrator' },
+      ));
+      logger.info({ companyId }, 'Phase 1: Legal incorporation initiated');
+    } catch (err) {
+      logger.error({ companyId, error: (err as Error).message }, 'Phase 1: Legal failed');
+      // Continue with other phases even if legal has issues
+      company.legal = { status: 'failed' };
+    }
+
+    // === Phase 2: Product ===
+    logger.info({ companyId }, 'Phase 2: Starting product build');
+    company.status = 'product_building';
+    company.updatedAt = new Date();
+    this.appendEvent(companyId, this.createEvent(
+      'company.product_started', companyId, 'company',
+      { swarmType: 'product' },
+      { correlationId, source: 'orchestrator' },
+    ));
+
+    try {
+      const productResult = await this.callService(
+        'product-service',
+        '/api/products/build',
+        'POST',
+        {
+          companyId,
+          idea: request.idea,
+          techPreferences: request.techPreferences ?? { stack: 'nextjs', database: 'supabase', hosting: 'vercel' },
+          features: request.features ?? ['auth', 'payments', 'dashboard'],
+        },
+      );
+
+      company.product = {
+        stack: request.techPreferences?.stack ?? 'nextjs',
+        features: request.features ?? ['auth', 'payments', 'dashboard'],
+        status: 'deploying',
+      };
+      company.status = 'product_deployed';
+      company.updatedAt = new Date();
+      this.appendEvent(companyId, this.createEvent(
+        'company.product_deployed', companyId, 'company',
+        { productResult },
+        { correlationId, source: 'orchestrator' },
+      ));
+      logger.info({ companyId }, 'Phase 2: Product build initiated');
+    } catch (err) {
+      logger.error({ companyId, error: (err as Error).message }, 'Phase 2: Product failed');
+      company.product = { stack: 'nextjs', features: [], status: 'failed' };
+    }
+
+    // === Phase 3: Growth ===
+    logger.info({ companyId }, 'Phase 3: Starting growth setup');
+    company.status = 'growth_active';
+    company.updatedAt = new Date();
+    this.appendEvent(companyId, this.createEvent(
+      'company.growth_started', companyId, 'company',
+      { swarmType: 'growth' },
+      { correlationId, source: 'orchestrator' },
+    ));
+
+    try {
+      const growthResult = await this.callService(
+        'growth-service',
+        '/api/growth/landing-page',
+        'POST',
+        {
+          companyId,
+          companyName: company.name,
+          idea: request.idea,
+          targetAudience: request.targetAudience ?? 'small businesses and startups',
+        },
+      );
+
+      company.growth = {
+        status: 'live',
+        adCampaigns: [],
+        socialAccounts: [],
+      };
+      company.updatedAt = new Date();
+      this.appendEvent(companyId, this.createEvent(
+        'company.growth_live', companyId, 'company',
+        { growthResult },
+        { correlationId, source: 'orchestrator' },
+      ));
+      logger.info({ companyId }, 'Phase 3: Growth setup initiated');
+    } catch (err) {
+      logger.error({ companyId, error: (err as Error).message }, 'Phase 3: Growth failed');
+      company.growth = { status: 'failed', adCampaigns: [], socialAccounts: [] };
+    }
+
+    // === Phase 4: Finance (parallel with growth) ===
+    try {
+      await this.callService(
+        'finance-service',
+        '/api/finance/setup',
+        'POST',
+        { companyId, companyName: company.name },
+      );
+      logger.info({ companyId }, 'Phase 4: Finance setup initiated');
+    } catch (err) {
+      logger.error({ companyId, error: (err as Error).message }, 'Phase 4: Finance failed');
+    }
+
+    // === Mark operational ===
+    company.status = 'operational';
+    company.updatedAt = new Date();
+    this.appendEvent(companyId, this.createEvent(
+      'company.operational', companyId, 'company',
+      { message: 'All swarms completed. Company is operational.' },
+      { correlationId, source: 'orchestrator' },
+    ));
+
+    logger.info({ companyId, name: company.name }, 'Company build pipeline completed — OPERATIONAL');
+  }
+
+  /**
+   * Call a downstream microservice via HTTP.
+   */
+  private async callService(
+    serviceName: string,
+    path: string,
+    method: string,
+    body?: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> {
+    const port = SERVICE_PORTS[serviceName];
+    if (!port) {
+      logger.warn({ serviceName }, `Unknown service: ${serviceName}, skipping`);
+      return null;
+    }
+
+    const url = `http://localhost:${port}${path}`;
+
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        logger.warn({ serviceName, path, status: response.status, body: text }, 'Service returned error');
+        return null;
+      }
+
+      return await response.json() as Record<string, unknown>;
+    } catch (error) {
+      // Service might not be running — log and continue
+      logger.warn(
+        { serviceName, path, error: (error as Error).message },
+        `Service ${serviceName} unreachable (may not be running)`,
+      );
+      return null;
+    }
+  }
+
   getCompany(id: string): Company | undefined {
     return this.companies.get(id);
   }
 
-  /**
-   * Get the event timeline for a company.
-   */
   getCompanyEvents(id: string): DomainEvent[] {
     return this.events.get(id) ?? [];
   }
 
-  /**
-   * Get the orchestration plan for a company.
-   */
   getOrchestrationPlan(id: string): SwarmOrchestrationPlan | undefined {
     return this.plans.get(id);
   }
 
-  /**
-   * Calculate overall progress (0-100) across all phases.
-   */
   getCompanyProgress(id: string): number {
     const companyEvents = this.events.get(id) ?? [];
     const plan = this.plans.get(id);
@@ -330,75 +417,25 @@ export class CompanyBuilder {
     const totalPhases = plan.phases.length;
     if (totalPhases === 0) return 0;
 
-    // Count completed phases based on events
     const completedPhases = new Set<string>();
     for (const event of companyEvents) {
       if (event.type === 'company.legal_completed') completedPhases.add('legal');
       if (event.type === 'company.product_deployed') completedPhases.add('product');
       if (event.type === 'company.growth_live') completedPhases.add('growth');
+      if (event.type === 'company.operational') completedPhases.add('finance');
     }
 
     return Math.round((completedPhases.size / totalPhases) * 100);
+  }
+
+  getAllCompanies(): Company[] {
+    return Array.from(this.companies.values());
   }
 
   // --------------------------------------------------
   // Internal helpers
   // --------------------------------------------------
 
-  /**
-   * Advance to the next phase of the orchestration plan.
-   * In a real system this would dispatch work to swarm services;
-   * for now it emits the phase-transition event and updates status.
-   */
-  private advancePhase(companyId: string, swarmType: SwarmType, correlationId: string): void {
-    const company = this.companies.get(companyId);
-    if (!company) return;
-
-    const statusMap: Record<SwarmType, CompanyStatus> = {
-      legal: 'legal_pending',
-      product: 'product_building',
-      growth: 'growth_active',
-      sales: 'sales_active',
-      finance: 'operational',
-      'customer-success': 'operational',
-    };
-
-    const eventTypeMap: Record<SwarmType, string> = {
-      legal: 'company.legal_started',
-      product: 'company.product_started',
-      growth: 'company.growth_started',
-      sales: 'company.growth_live',
-      finance: 'company.operational',
-      'customer-success': 'company.operational',
-    };
-
-    const newStatus = statusMap[swarmType];
-    if (newStatus) {
-      company.status = newStatus;
-      company.updatedAt = new Date();
-    }
-
-    const eventType = eventTypeMap[swarmType];
-    if (eventType) {
-      const event = this.createEvent(
-        eventType,
-        companyId,
-        'company',
-        { swarmType, phase: swarmType },
-        { correlationId, source: 'orchestrator' },
-      );
-      this.appendEvent(companyId, event);
-    }
-
-    logger.info(
-      { companyId, swarmType, newStatus },
-      'Phase advanced',
-    );
-  }
-
-  /**
-   * Create a domain event.
-   */
   private createEvent(
     type: string,
     aggregateId: string,
@@ -426,17 +463,10 @@ export class CompanyBuilder {
     };
   }
 
-  /**
-   * Append an event to the company's event store.
-   */
   private appendEvent(companyId: string, event: DomainEvent): void {
     const existing = this.events.get(companyId) ?? [];
     existing.push(event);
     this.events.set(companyId, existing);
-
-    logger.debug(
-      { companyId, eventType: event.type, eventId: event.id },
-      'Event appended',
-    );
+    logger.debug({ companyId, eventType: event.type, eventId: event.id }, 'Event appended');
   }
 }

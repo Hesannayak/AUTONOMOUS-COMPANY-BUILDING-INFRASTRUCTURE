@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { createLogger, generateId } from '@acbi/utils';
@@ -7,7 +7,7 @@ import { WorkflowExecutor } from './workflow-executor.js';
 import type { WorkflowDefinition, WorkflowStep, StepType } from './workflow-executor.js';
 
 const logger = createLogger('workflow-engine');
-const app = express();
+const app: Express = express();
 const port = SERVICE_PORTS['workflow-engine'] ?? 3011;
 
 // Middleware

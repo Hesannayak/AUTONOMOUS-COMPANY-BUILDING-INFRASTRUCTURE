@@ -5,7 +5,7 @@
 // Phase 3: Real sandboxing via Docker/Firecracker.
 // ============================================
 
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { createLogger } from '@acbi/utils';
@@ -15,7 +15,7 @@ import { ProjectTemplateManager } from './templates.js';
 import type { SupportedLanguage } from './sandbox.js';
 
 const logger = createLogger('code-execution-service');
-const app = express();
+const app: Express = express();
 const port = SERVICE_PORTS['code-execution-service'] ?? 3008;
 
 // Middleware

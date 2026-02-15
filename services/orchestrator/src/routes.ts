@@ -211,5 +211,22 @@ export function createRouter(companyBuilder: CompanyBuilder): Router {
     }
   });
 
+  // -----------------------------------------------
+  // GET /api/companies
+  // List all companies.
+  // -----------------------------------------------
+  router.get('/api/companies', (_req: Request, res: Response) => {
+    const requestId = generateId('req');
+    const companies = companyBuilder.getAllCompanies();
+
+    const response: ApiResponse<typeof companies> = {
+      success: true,
+      data: companies,
+      meta: { requestId, timestamp: new Date().toISOString() },
+    };
+
+    res.status(200).json(response);
+  });
+
   return router;
 }
