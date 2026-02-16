@@ -2,6 +2,7 @@
 // Company Builder
 // Meta-coordinator that takes a "build company" request and orchestrates
 // all swarms (legal, product, growth, sales, finance, customer-success).
+// Includes safety rail checkpoints for human-in-the-loop actions.
 // ============================================
 
 import type {
@@ -20,6 +21,32 @@ import { SERVICE_PORTS } from '@acbi/config';
 import { ResourceManager } from './resource-manager.js';
 
 const logger = createLogger('orchestrator:company-builder');
+
+// ============================================
+// Safety Rails — Human-in-the-loop checkpoints
+// These are ACTION checkpoints, not blocking approvals.
+// The build pauses at certain critical points, and the
+// user confirms before the system proceeds.
+// ============================================
+
+export type CheckpointType =
+  | 'legal_sign_docs'       // After legal swarm forms entity → sign incorporation docs
+  | 'product_review_demo'   // After product swarm builds MVP → review the demo
+  | 'growth_confirm_ad_spend'; // Before charging ads budget → confirm spend
+
+export type CheckpointStatus = 'pending' | 'approved' | 'rejected';
+
+export interface SafetyCheckpoint {
+  id: string;
+  companyId: string;
+  type: CheckpointType;
+  status: CheckpointStatus;
+  title: string;
+  description: string;
+  details: Record<string, unknown>;
+  createdAt: Date;
+  resolvedAt: Date | null;
+}
 
 /**
  * Default swarm phases with sequential dependencies:
@@ -123,6 +150,8 @@ export class CompanyBuilder {
   private companies: Map<string, Company> = new Map();
   private events: Map<string, DomainEvent[]> = new Map();
   private plans: Map<string, SwarmOrchestrationPlan> = new Map();
+  private checkpoints: Map<string, SafetyCheckpoint[]> = new Map();
+  private pipelineResolvers: Map<string, () => void> = new Map();
   private resourceManager: ResourceManager;
 
   constructor(resourceManager: ResourceManager) {
@@ -244,6 +273,18 @@ export class CompanyBuilder {
         { correlationId, source: 'orchestrator' },
       ));
       logger.info({ companyId }, 'Phase 1: Legal incorporation initiated');
+
+      // SAFETY RAIL: Ask user to sign incorporation docs before proceeding
+      await this.createAndWaitForCheckpoint(companyId, 'legal_sign_docs', {
+        title: 'Sign incorporation documents',
+        description: 'Your legal entity has been formed. Review and confirm the incorporation documents before we proceed to building your product.',
+        details: {
+          entityType: company.entityType,
+          jurisdiction: company.jurisdiction,
+          legalResult,
+        },
+      }, correlationId);
+
     } catch (err) {
       logger.error({ companyId, error: (err as Error).message }, 'Phase 1: Legal failed');
       // Continue with other phases even if legal has issues
@@ -286,6 +327,18 @@ export class CompanyBuilder {
         { correlationId, source: 'orchestrator' },
       ));
       logger.info({ companyId }, 'Phase 2: Product build initiated');
+
+      // SAFETY RAIL: Ask user to review the product demo before going live
+      await this.createAndWaitForCheckpoint(companyId, 'product_review_demo', {
+        title: 'Review your product demo',
+        description: 'Your MVP has been built. Review the demo and confirm before we start marketing.',
+        details: {
+          stack: company.product.stack,
+          features: company.product.features,
+          productResult,
+        },
+      }, correlationId);
+
     } catch (err) {
       logger.error({ companyId, error: (err as Error).message }, 'Phase 2: Product failed');
       company.product = { stack: 'nextjs', features: [], status: 'failed' };
@@ -293,6 +346,18 @@ export class CompanyBuilder {
 
     // === Phase 3: Growth ===
     logger.info({ companyId }, 'Phase 3: Starting growth setup');
+
+    // SAFETY RAIL: Confirm ad spend before charging marketing budget
+    const marketingBudget = this.resourceManager.getRemainingBudget(companyId);
+    await this.createAndWaitForCheckpoint(companyId, 'growth_confirm_ad_spend', {
+      title: 'Confirm marketing spend',
+      description: `Ready to launch marketing campaigns. Estimated spend: up to $${Math.round(marketingBudget * 0.25)} on ads and content. Confirm to proceed.`,
+      details: {
+        estimatedAdSpend: Math.round(marketingBudget * 0.25),
+        channels: ['SEO', 'Landing page', 'Social media', 'Content marketing'],
+      },
+    }, correlationId);
+
     company.status = 'growth_active';
     company.updatedAt = new Date();
     this.appendEvent(companyId, this.createEvent(
@@ -395,6 +460,109 @@ export class CompanyBuilder {
       );
       return null;
     }
+  }
+
+  // --------------------------------------------------
+  // Safety checkpoint methods
+  // --------------------------------------------------
+
+  /**
+   * Create a checkpoint and pause the pipeline until the user approves it.
+   * If AUTO_APPROVE_CHECKPOINTS is set, checkpoints are auto-approved (for dev/testing).
+   */
+  private async createAndWaitForCheckpoint(
+    companyId: string,
+    type: CheckpointType,
+    config: { title: string; description: string; details: Record<string, unknown> },
+    correlationId: string,
+  ): Promise<void> {
+    const checkpoint: SafetyCheckpoint = {
+      id: generateId('chk'),
+      companyId,
+      type,
+      status: 'pending',
+      title: config.title,
+      description: config.description,
+      details: config.details,
+      createdAt: new Date(),
+      resolvedAt: null,
+    };
+
+    const existing = this.checkpoints.get(companyId) ?? [];
+    existing.push(checkpoint);
+    this.checkpoints.set(companyId, existing);
+
+    this.appendEvent(companyId, this.createEvent(
+      'company.checkpoint_created', companyId, 'company',
+      { checkpointId: checkpoint.id, type, title: config.title },
+      { correlationId, source: 'orchestrator' },
+    ));
+
+    logger.info({ companyId, checkpointId: checkpoint.id, type }, 'Safety checkpoint created — waiting for approval');
+
+    // In dev mode, auto-approve after a short delay so the pipeline doesn't block forever
+    if (process.env['AUTO_APPROVE_CHECKPOINTS'] === 'true') {
+      logger.info({ companyId, checkpointId: checkpoint.id }, 'Auto-approving checkpoint (dev mode)');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      checkpoint.status = 'approved';
+      checkpoint.resolvedAt = new Date();
+      return;
+    }
+
+    // Wait for user to approve via the API
+    return new Promise<void>((resolve) => {
+      const resolverKey = `${companyId}:${checkpoint.id}`;
+      this.pipelineResolvers.set(resolverKey, resolve);
+    });
+  }
+
+  /**
+   * Approve or reject a pending checkpoint.
+   * Returns the updated checkpoint, or null if not found.
+   */
+  resolveCheckpoint(companyId: string, checkpointId: string, action: 'approve' | 'reject'): SafetyCheckpoint | null {
+    const checkpoints = this.checkpoints.get(companyId);
+    if (!checkpoints) return null;
+
+    const checkpoint = checkpoints.find(c => c.id === checkpointId);
+    if (!checkpoint || checkpoint.status !== 'pending') return null;
+
+    checkpoint.status = action === 'approve' ? 'approved' : 'rejected';
+    checkpoint.resolvedAt = new Date();
+
+    logger.info({ companyId, checkpointId, action }, `Checkpoint ${action}d`);
+
+    this.appendEvent(companyId, this.createEvent(
+      `company.checkpoint_${action}d`, companyId, 'company',
+      { checkpointId, type: checkpoint.type },
+      { correlationId: generateCorrelationId(), source: 'user' },
+    ));
+
+    // Resume the pipeline if approved
+    if (action === 'approve') {
+      const resolverKey = `${companyId}:${checkpointId}`;
+      const resolver = this.pipelineResolvers.get(resolverKey);
+      if (resolver) {
+        resolver();
+        this.pipelineResolvers.delete(resolverKey);
+      }
+    }
+
+    return checkpoint;
+  }
+
+  /**
+   * Get all checkpoints for a company.
+   */
+  getCheckpoints(companyId: string): SafetyCheckpoint[] {
+    return this.checkpoints.get(companyId) ?? [];
+  }
+
+  /**
+   * Get pending checkpoints for a company (the ones needing user action).
+   */
+  getPendingCheckpoints(companyId: string): SafetyCheckpoint[] {
+    return (this.checkpoints.get(companyId) ?? []).filter(c => c.status === 'pending');
   }
 
   getCompany(id: string): Company | undefined {

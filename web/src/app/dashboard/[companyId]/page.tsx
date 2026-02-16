@@ -16,6 +16,18 @@ interface TimelineEvent {
   type: "info" | "success" | "warning" | "error";
 }
 
+interface SafetyCheckpoint {
+  id: string;
+  companyId: string;
+  type: string;
+  status: "pending" | "approved" | "rejected";
+  title: string;
+  description: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
 interface CompanyData {
   company_id: string;
   company_name: string;
@@ -103,21 +115,52 @@ export default function DashboardPage() {
   const companyId = params.companyId as string;
 
   const [company, setCompany] = useState<CompanyData | null>(null);
+  const [checkpoints, setCheckpoints] = useState<SafetyCheckpoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  const API_BASE = "http://localhost:3001";
 
   const fetchCompany = useCallback(async () => {
     try {
-      const response = await fetch(`/api/companies/${companyId}`);
-      if (!response.ok) {
+      const [companyResp, checkpointsResp] = await Promise.all([
+        fetch(`${API_BASE}/api/companies/${companyId}`),
+        fetch(`${API_BASE}/api/companies/${companyId}/checkpoints`),
+      ]);
+
+      if (!companyResp.ok) {
         throw new Error(
-          response.status === 404
+          companyResp.status === 404
             ? "Company not found"
-            : `Failed to fetch company data (${response.status})`
+            : `Failed to fetch company data (${companyResp.status})`
         );
       }
-      const data = await response.json();
-      setCompany(data);
+      const companyData = await companyResp.json();
+
+      // Map API response to dashboard format
+      const apiData = companyData.data;
+      setCompany({
+        company_id: apiData.id,
+        company_name: apiData.name,
+        status: apiData.status === "operational" ? "completed" : apiData.status === "failed" ? "failed" : "building",
+        progress: apiData.progress,
+        swarms: apiData.swarms || [],
+        events: (apiData.timeline || []).map((t: { event: string; timestamp: string; details?: string }, i: number) => ({
+          id: `evt-${i}`,
+          timestamp: t.timestamp,
+          message: t.event.replace(/_/g, " ").replace("company.", ""),
+          type: t.event.includes("fail") ? "error" : t.event.includes("completed") || t.event.includes("operational") ? "success" : "info",
+        })),
+        budget: apiData.costs || { total: 0, spent: 0, remaining: 0 },
+        created_at: apiData.timeline?.[0]?.timestamp || new Date().toISOString(),
+      });
+
+      if (checkpointsResp.ok) {
+        const cpData = await checkpointsResp.json();
+        setCheckpoints(cpData.data?.checkpoints ?? []);
+      }
+
       setError(null);
     } catch (err) {
       setError(
@@ -127,6 +170,24 @@ export default function DashboardPage() {
       setLoading(false);
     }
   }, [companyId]);
+
+  const handleCheckpointAction = async (checkpointId: string, action: "approve" | "reject") => {
+    setApprovingId(checkpointId);
+    try {
+      const resp = await fetch(
+        `${API_BASE}/api/companies/${companyId}/checkpoints/${checkpointId}/${action}`,
+        { method: "POST", headers: { "Content-Type": "application/json" } }
+      );
+      if (resp.ok) {
+        // Refresh data immediately
+        await fetchCompany();
+      }
+    } catch {
+      // Will refresh on next poll
+    } finally {
+      setApprovingId(null);
+    }
+  };
 
   useEffect(() => {
     fetchCompany();
@@ -210,6 +271,71 @@ export default function DashboardPage() {
             />
           </div>
         </div>
+
+        {/* Safety Rail Checkpoints — Action Items */}
+        {checkpoints.filter(c => c.status === "pending").length > 0 && (
+          <div className="mb-8 space-y-4">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              Action Required
+            </h2>
+            {checkpoints
+              .filter((c) => c.status === "pending")
+              .map((checkpoint) => (
+                <div
+                  key={checkpoint.id}
+                  className="border border-amber-500/30 bg-amber-500/5 rounded-xl p-6"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="font-semibold text-amber-300">
+                        {checkpoint.title}
+                      </h3>
+                      <p className="mt-1 text-sm text-gray-400">
+                        {checkpoint.description}
+                      </p>
+                    </div>
+                    <div className="flex gap-3 shrink-0">
+                      <button
+                        onClick={() => handleCheckpointAction(checkpoint.id, "reject")}
+                        disabled={approvingId === checkpoint.id}
+                        className="btn-secondary px-4 py-2 text-sm disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                      <button
+                        onClick={() => handleCheckpointAction(checkpoint.id, "approve")}
+                        disabled={approvingId === checkpoint.id}
+                        className="btn-primary px-4 py-2 text-sm disabled:opacity-50"
+                      >
+                        {approvingId === checkpoint.id ? "Approving..." : "Approve & Continue"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {/* Resolved Checkpoints Summary */}
+        {checkpoints.filter(c => c.status !== "pending").length > 0 && (
+          <div className="mb-8 flex flex-wrap gap-2">
+            {checkpoints
+              .filter((c) => c.status !== "pending")
+              .map((checkpoint) => (
+                <span
+                  key={checkpoint.id}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border ${
+                    checkpoint.status === "approved"
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : "bg-red-500/10 border-red-500/30 text-red-400"
+                  }`}
+                >
+                  {checkpoint.status === "approved" ? "\u2713" : "\u2717"} {checkpoint.title}
+                </span>
+              ))}
+          </div>
+        )}
 
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Left column: Swarms + Budget */}

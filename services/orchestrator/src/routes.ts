@@ -13,11 +13,80 @@ import type {
 } from '@acbi/types';
 import { createLogger, generateId } from '@acbi/utils';
 import { CompanyBuilder } from './company-builder.js';
+import { generateSmartQuestions, generatePlan } from './plan-generator.js';
 
 const logger = createLogger('orchestrator:routes');
 
 export function createRouter(companyBuilder: CompanyBuilder): Router {
   const router = Router();
+
+  // -----------------------------------------------
+  // POST /api/companies/questions
+  // Version A (Fast Flow): Generate smart questions from idea.
+  // -----------------------------------------------
+  router.post('/api/companies/questions', (req: Request, res: Response) => {
+    const requestId = generateId('req');
+    const { idea } = req.body as { idea?: string };
+
+    if (!idea || typeof idea !== 'string' || idea.trim().length < 5) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Field "idea" is required (min 5 chars)' },
+        meta: { requestId, timestamp: new Date().toISOString() },
+      });
+      return;
+    }
+
+    const questions = generateSmartQuestions(idea.trim());
+
+    res.json({
+      success: true,
+      data: { questions },
+      meta: { requestId, timestamp: new Date().toISOString() },
+    });
+  });
+
+  // -----------------------------------------------
+  // POST /api/companies/plan
+  // Version A (Fast Flow): Generate one-page plan from idea + answers.
+  // -----------------------------------------------
+  router.post('/api/companies/plan', async (req: Request, res: Response) => {
+    const requestId = generateId('req');
+
+    try {
+      const { idea, answers, founderName, founderEmail } = req.body as {
+        idea?: string;
+        answers?: Record<string, string>;
+        founderName?: string;
+        founderEmail?: string;
+      };
+
+      if (!idea || !answers || !founderName || !founderEmail) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: 'Fields idea, answers, founderName, founderEmail are required' },
+          meta: { requestId, timestamp: new Date().toISOString() },
+        });
+        return;
+      }
+
+      logger.info({ requestId, idea: idea.slice(0, 100) }, 'Generating company plan');
+      const plan = await generatePlan(idea, answers, founderName, founderEmail);
+
+      res.json({
+        success: true,
+        data: { plan, founderName, founderEmail },
+        meta: { requestId, timestamp: new Date().toISOString() },
+      });
+    } catch (error) {
+      logger.error({ requestId, error }, 'Failed to generate plan');
+      res.status(500).json({
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Failed to generate plan' },
+        meta: { requestId, timestamp: new Date().toISOString() },
+      });
+    }
+  });
 
   // -----------------------------------------------
   // POST /api/companies/build
@@ -209,6 +278,87 @@ export function createRouter(companyBuilder: CompanyBuilder): Router {
       };
       res.status(500).json(response);
     }
+  });
+
+  // -----------------------------------------------
+  // GET /api/companies/:id/checkpoints
+  // Get all safety checkpoints for a company.
+  // -----------------------------------------------
+  router.get('/api/companies/:id/checkpoints', (req: Request, res: Response) => {
+    const requestId = generateId('req');
+    const { id } = req.params;
+
+    const company = companyBuilder.getCompany(id!);
+    if (!company) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: `Company ${id} not found` },
+        meta: { requestId, timestamp: new Date().toISOString() },
+      });
+      return;
+    }
+
+    const checkpoints = companyBuilder.getCheckpoints(id!);
+
+    res.json({
+      success: true,
+      data: { checkpoints },
+      meta: { requestId, timestamp: new Date().toISOString() },
+    });
+  });
+
+  // -----------------------------------------------
+  // POST /api/companies/:id/checkpoints/:checkpointId/approve
+  // Approve a pending safety checkpoint.
+  // -----------------------------------------------
+  router.post('/api/companies/:id/checkpoints/:checkpointId/approve', (req: Request, res: Response) => {
+    const requestId = generateId('req');
+    const { id, checkpointId } = req.params;
+
+    const result = companyBuilder.resolveCheckpoint(id!, checkpointId!, 'approve');
+    if (!result) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Checkpoint not found or already resolved' },
+        meta: { requestId, timestamp: new Date().toISOString() },
+      });
+      return;
+    }
+
+    logger.info({ requestId, companyId: id, checkpointId }, 'Checkpoint approved');
+
+    res.json({
+      success: true,
+      data: { checkpoint: result },
+      meta: { requestId, timestamp: new Date().toISOString() },
+    });
+  });
+
+  // -----------------------------------------------
+  // POST /api/companies/:id/checkpoints/:checkpointId/reject
+  // Reject a pending safety checkpoint.
+  // -----------------------------------------------
+  router.post('/api/companies/:id/checkpoints/:checkpointId/reject', (req: Request, res: Response) => {
+    const requestId = generateId('req');
+    const { id, checkpointId } = req.params;
+
+    const result = companyBuilder.resolveCheckpoint(id!, checkpointId!, 'reject');
+    if (!result) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Checkpoint not found or already resolved' },
+        meta: { requestId, timestamp: new Date().toISOString() },
+      });
+      return;
+    }
+
+    logger.info({ requestId, companyId: id, checkpointId }, 'Checkpoint rejected');
+
+    res.json({
+      success: true,
+      data: { checkpoint: result },
+      meta: { requestId, timestamp: new Date().toISOString() },
+    });
   });
 
   // -----------------------------------------------
