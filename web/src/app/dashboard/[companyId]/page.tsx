@@ -120,7 +120,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
-  const API_BASE = "http://localhost:3001";
+  const API_BASE = "";
 
   const fetchCompany = useCallback(async () => {
     try {

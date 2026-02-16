@@ -34,7 +34,7 @@ interface CompanyPlan {
   risks: string[];
 }
 
-const API_BASE = "http://localhost:3001";
+const API_BASE = "";
 
 export default function BuildPage() {
   const router = useRouter();
